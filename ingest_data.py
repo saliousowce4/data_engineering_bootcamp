@@ -2,11 +2,15 @@ import  os
 import pandas as pd
 from sqlalchemy import create_engine
 
-DB_USER = "postgres"
-DB_PASS = "postgres"
+from dotenv import load_dotenv
+
+load_dotenv()
+
+DB_USER = os.getenv("POSTGRES_USER")
+DB_PASS = os.getenv("POSTGRES_PASSWORD")
 DB_HOST = "localhost"
-DB_PORT = "5433"
-DB_NAME = "ny_taxi"
+DB_PORT = os.getenv("HOST_DB_PORT")
+DB_NAME = os.getenv("POSTGRES_DB")
 
 URL_TAXI = "https://d37ci6vzurychx.cloudfront.net/trip-data/green_tripdata_2025-11.parquet"
 URL_ZONES = "https://github.com/DataTalksClub/nyc-tlc-data/releases/download/misc/taxi_zone_lookup.csv"
