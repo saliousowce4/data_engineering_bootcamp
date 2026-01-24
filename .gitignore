@@ -1,0 +1,15 @@
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# Python compiled files (junk)
+__pycache__/
+*.pyc
+
+# Mac OS junk
+.DS_Store
+
+# IDE settings (Optional, keeps repo clean)
+.idea/
+.vscode/
