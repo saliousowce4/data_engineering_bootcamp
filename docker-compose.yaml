@@ -26,9 +26,74 @@ services:
     networks:
       - taxi_network
 
+ # The System Database (Stores Flows, Logs, History)
+  kestra_db:
+    image: postgres:17-alpine
+    container_name: kestra_db
+    environment:
+      POSTGRES_USER: ${KESTRA_DB_USER}
+      POSTGRES_PASSWORD: ${KESTRA_DB_PASSWORD}
+      POSTGRES_DB: ${KESTRA_DB_NAME}
+    volumes:
+      - kestra_pg_data:/var/lib/postgresql/data
+    networks:
+      - taxi_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d ${KESTRA_DB_NAME} -U ${KESTRA_DB_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+ # Kestra Application (The Course Version, Adapted)
+  kestra:
+    image: kestra/kestra:v1.1 # <--- STABLE VERSION
+    container_name: kestra
+    command: server standalone # <--- CORRECT COMMAND FOR V1
+    user: "root" # Needed to access Docker Socket on some systems
+    ports:
+      - "8081:8080" # <--- FIXED PORT CONFLICT (Mac uses 8081)
+    depends_on:
+      kestra_db:
+        condition: service_healthy
+    networks:
+      - taxi_network
+    volumes:
+      - kestra_data:/app/storage
+      - /var/run/docker.sock:/var/run/docker.sock # <--- CRITICAL FOR PYTHON TASKS
+      - /tmp/kestra-wd:/tmp/kestra-wd
+    environment:
+      KESTRA_CONFIGURATION: |
+        datasources:
+          postgres:
+            url: jdbc:postgresql://kestra_db:5432/${KESTRA_DB_NAME}
+            driverClassName: org.postgresql.Driver
+            username: ${KESTRA_DB_USER}
+            password: ${KESTRA_DB_PASSWORD}
+        kestra:
+          server:
+            basicAuth:
+              # We disable Auth for local dev to make it easier, 
+              # or use admin@kestra.io / Admin1234! if it forces you.
+              username: "admin@kestra.io"
+              password: "Admin1234!"
+          repository:
+            type: postgres
+          storage:
+            type: local
+            local:
+              basePath: "/app/storage"
+          queue:
+            type: postgres
+          tasks:
+            tmpDir:
+              path: /tmp/kestra-wd/tmp
+          url: http://localhost:8081/ 
+
 volumes:
   vol-pgdata:
   vol-pgadmin_data:
+  kestra_pg_data:
+  kestra_data: # New volume for Kestra storage
 
 networks:
   taxi_network:

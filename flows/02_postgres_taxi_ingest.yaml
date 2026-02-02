@@ -1,0 +1,104 @@
+id: 02_postgres_taxi_ingest
+namespace: zoomcamp
+description: "Ingest Yellow or Green Taxi data (2021) to Postgres"
+
+inputs:
+  - id: taxi_type
+    type: SELECT
+    displayName: Taxi Type
+    values: ["yellow", "green"]
+    defaults: "green"
+
+  - id: year
+    type: STRING
+    displayName: Year
+    defaults: "2021"
+
+  - id: month
+    type: STRING
+    displayName: Month
+    defaults: "01"
+
+tasks:
+  # 1. GENERATE FILE URL
+  - id: set_filename
+    type: io.kestra.plugin.core.debug.Return
+    format: "{{inputs.taxi_type}}_tripdata_{{inputs.year}}-{{inputs.month}}.csv.gz"
+
+  # 2. DOWNLOAD FROM GITHUB
+  - id: download_file
+    type: io.kestra.plugin.core.http.Download
+    uri: "https://github.com/DataTalksClub/nyc-tlc-data/releases/download/{{inputs.taxi_type}}/{{inputs.taxi_type}}_tripdata_{{inputs.year}}-{{inputs.month}}.csv.gz"
+
+  # 3. PYTHON ETL (Secure Credentials)
+  - id: python_ingest
+    type: io.kestra.plugin.scripts.python.Script
+    docker:
+      image: python:3.9-slim
+      networkMode: homework_one_taxi_network
+    # --- INJECT ENV VARS INTO CONTAINER ---
+    env:
+      DB_USER: "{{ envs.POSTGRES_USER }}"
+      DB_PASSWORD: "{{ envs.POSTGRES_PASSWORD }}"
+      DB_NAME: "{{ envs.POSTGRES_DB }}"
+      DB_HOST: "postgres" # Internal container name
+    # --------------------------------------
+    beforeCommands:
+      - pip install pandas sqlalchemy psycopg2-binary
+    script: |
+      import pandas as pd
+      from sqlalchemy import create_engine
+      import os
+
+      # Fetch variables from Environment (Secure)
+      user = os.getenv("DB_USER")
+      password = os.getenv("DB_PASSWORD")
+      host = os.getenv("DB_HOST")
+      port = "5432"
+      db = os.getenv("DB_NAME")
+      
+      # Kestra internal file path
+      file_path = "{{outputs.download_file.uri}}"
+      taxi_type = "{{inputs.taxi_type}}"
+      table_name = f"{taxi_type}_tripdata"
+
+      print(f"🚀 Processing {taxi_type} data for {table_name}...")
+
+      # Create Connection String
+      engine = create_engine(f'postgresql://{user}:{password}@{host}:{port}/{db}')
+
+      # Chunking for memory safety
+      df_iter = pd.read_csv(file_path, iterator=True, chunksize=100000, compression='gzip', low_memory=False)
+
+      try:
+          # Process First Chunk to fix columns and Create Table
+          df = next(df_iter)
+          
+          # Fix Date Columns (Yellow vs Green difference)
+          if 'tpep_pickup_datetime' in df.columns:
+              df.tpep_pickup_datetime = pd.to_datetime(df.tpep_pickup_datetime)
+              df.tpep_dropoff_datetime = pd.to_datetime(df.tpep_dropoff_datetime)
+          elif 'lpep_pickup_datetime' in df.columns:
+              df.lpep_pickup_datetime = pd.to_datetime(df.lpep_pickup_datetime)
+              df.lpep_dropoff_datetime = pd.to_datetime(df.lpep_dropoff_datetime)
+
+          # 'append' mode allows adding multiple months to the same table
+          df.head(n=0).to_sql(name=table_name, con=engine, if_exists='append') 
+          df.to_sql(name=table_name, con=engine, if_exists='append')
+          print("✅ First chunk inserted.")
+
+          # Loop the rest
+          while True:
+              df = next(df_iter)
+              if 'tpep_pickup_datetime' in df.columns:
+                  df.tpep_pickup_datetime = pd.to_datetime(df.tpep_pickup_datetime)
+                  df.tpep_dropoff_datetime = pd.to_datetime(df.tpep_dropoff_datetime)
+              elif 'lpep_pickup_datetime' in df.columns:
+                  df.lpep_pickup_datetime = pd.to_datetime(df.lpep_pickup_datetime)
+                  df.lpep_dropoff_datetime = pd.to_datetime(df.lpep_dropoff_datetime)
+              
+              df.to_sql(name=table_name, con=engine, if_exists='append')
+              print("📦 Chunk inserted...")
+
+      except StopIteration:
+          print("🎉 Finished ingesting file.")
